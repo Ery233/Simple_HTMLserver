@@ -14,20 +14,110 @@
 #include <unistd.h>
 void not_found(int client);
 void unimplemented(int sock);
-int startup(int port);
+int startup(u_short *port);
 void serve_file(int client, const char *filename);
 int get_line(int sock, char *buf, int size);
-int startup(int port) {
+void headers(int client, const char *filename);
+void cat(int client, FILE *resource);
+
+void cat(int client, FILE *resource) {
+  char buf[1024];
+
+  fgets(buf, sizeof(buf), resource);
+  while (!feof(resource)) {
+    send(client, buf, strlen(buf), 0);
+    fgets(buf, sizeof(buf), resource);
+  }
+}
+
+void headers(int client, const char *filename) {
+  char buf[1024];
+  (void)filename; /* could use filename to determine file type */
+
+  strcpy(buf, "HTTP/1.0 200 OK\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "Server: Simple_Server\r\n");
+  send(client, buf, strlen(buf), 0);
+  sprintf(buf, "Content-Type: text/html\r\n");
+  send(client, buf, strlen(buf), 0);
+  strcpy(buf, "\r\n");
+  send(client, buf, strlen(buf), 0);
+}
+void serve_file(int client, const char *filename) {
+  FILE *resource = NULL;
+  int numchars = 1;
+  char buf[1024];
+
+  buf[0] = 'A';
+  buf[1] = '\0';
+  while ((numchars > 0) && strcmp("\n", buf)) /* read & discard headers */
+    numchars = get_line(client, buf, sizeof(buf));
+
+  resource = fopen(filename, "r");
+  if (resource == NULL)
+    not_found(client);
+  else {
+    headers(client, filename);
+    cat(client, resource);
+  }
+  fclose(resource);
+}
+
+// int startup(u_short *port) {
+//   int httpd = 0;
+//   int on = 1;
+//   struct sockaddr_in name;
+
+//   httpd = socket(PF_INET, SOCK_STREAM, 0); //指定IPV4
+//   if (httpd == -1)                         //如果是-1就是创建失败
+//   {
+//     perror("setsocketopt error");
+//     exit(EXIT_FAILURE);
+//   }
+//   memset(&name, 0, sizeof(name)); //格式化结构体
+//   name.sin_family = AF_INET;
+//   name.sin_port = htons(*port);             //转换网络字节序
+//   name.sin_addr.s_addr = htonl(INADDR_ANY); //监听任何IP发送的数据报
+//   if ((setsockopt(httpd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on))) <
+//       0) //将上面的结构绑定到socket套接字中
+//   {
+//     perror("setsocketopt error");
+//     exit(EXIT_FAILURE);
+//   }
+//   if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0) {
+//     perror("setsocketopt error");
+//     exit(EXIT_FAILURE);
+//   }
+//   if (*port == 0) /* if dynamically allocating a port */
+//   {
+//     socklen_t namelen = sizeof(name);
+//     if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1) {
+//       perror("setsocketopt error");
+//       exit(EXIT_FAILURE);
+//     }
+//     *port = ntohs(name.sin_port);
+//   }
+//   if (listen(httpd, 5) < 0) {
+//     perror("setsocketopt error");
+//     exit(EXIT_FAILURE);
+//   }
+//   return (httpd);
+// }
+int startup(u_short *port) {
   int buf;
   struct sockaddr_in server_address;
   int server_sock = 0;
   // int socket(int family, int type, int protocal)
-  server_sock =
-      socket(PF_INET, SOCK_STREAM, IPPROTO_TCP); //指定IPV4协议，字节流，TCP协议
+  server_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+  //指定IPV4协议，字节流，TCP协议
+
+  memset(&server_address, 0, sizeof(server_address)); //格式化结构体
   server_address.sin_family =
       AF_INET; // 指定IPV4 他是一个较小的16位整数，在网络中不需要转换字节序
-  server_address.sin_addr.s_addr = htonl(INADDR_ANY); //监听来自任何IP的数据报
-  server_address.sin_port = htonl(port); //本服务器的端口是80
+  server_address.sin_port = htons(*port); //转换网络字节序
+  server_address.sin_addr.s_addr = htonl(INADDR_ANY);
+  //监听来自任何IP的数据报 server_address.sin_port = htonl(*port);
+  //本服务器的端口是80
   //要设置的socket，socket的级别，socket的可选选项，socket传送的缓冲区，缓冲区大小
   // setsockopt(int fd, int level, int optname, const void *optval, socklen_t
   // optlen)
@@ -48,9 +138,6 @@ int startup(int port) {
   }
   return server_sock;
 }
-
-
-
 
 void unimplemented(int sock) {
   char buf[1024];
@@ -123,13 +210,13 @@ int get_line(int sock, char *buf, int size) {
 }
 
 void accept_request(int client_sock) {
+  printf("client:%d\n", client_sock);
   int numchars;     //获取读取到的信息个数
   char buf[1024];   //缓冲区
   char method[255]; // HTTP的请求方法
   char url[255];    //请求的路径
-  char path[255];   //存放html页面的路径
+  char path[1024];  //存放html页面的路径
   struct stat st;   //用来查找html文件是否存在
-
   numchars = get_line(client_sock, buf, sizeof(buf)); //会造成阻塞
 
   size_t
@@ -174,7 +261,9 @@ void accept_request(int client_sock) {
       //如果这个文件是个目录，那就需要再在 path
       //后面拼接一个"/index.html"的字符串
       strcat(path, "/index.html");
-//1111111111111111111111111111111111111111111111111111111
+    // 1111111111111111111111111111111111111111111111111111111
+
+    serve_file(client_sock, path);
   }
   close(client_sock);
 }
@@ -184,14 +273,17 @@ int main() {
   u_short port = 80;
   int client_sock = -1;
   struct sockaddr_in client_address;
-  server_sock = startup(port);
+  server_sock = startup(&port);
   printf("server running on port:%d\n", port);
   socklen_t client_len = sizeof(client_sock);
+  printf("server_sock:%d\n", server_sock);
   while (1) {
     // accept(int fd, struct sockaddr *restrict addr, socklen_t *restrict
     // addr_len)
     client_sock =
         accept(server_sock, (struct sockaddr *)&client_address, &client_len);
+    printf("client:%d\n", client_sock);
+    ;
     //将address的长度设置为地址是为了获得client_sock的地址
     if (client_sock == -1) {
       perror("accept error");
@@ -199,4 +291,7 @@ int main() {
     }
     accept_request(client_sock);
   }
+  close(server_sock);
+
+  return (0);
 }
